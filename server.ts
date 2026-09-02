@@ -1,26 +1,56 @@
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import app from './api/app';
+import dotenv from 'dotenv';
+import app from './api/index';
 
-const PORT = Number(process.env.PORT) || 3000;
+dotenv.config();
 
-async function startLocalServer() {
-  const vite = await createViteServer({
-    server: {
-      middlewareMode: true,
-    },
-    appType: 'spa',
-  });
+const PORT = Number(
+  process.env.PORT || 3000
+);
 
-  app.use(vite.middlewares);
+async function startServer() {
+  const vite =
+    await createViteServer({
+      server: {
+        middlewareMode: true,
+      },
+      appType: 'spa',
+    });
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(
-      `[LitNuke X ANUMA] Server running on http://localhost:${PORT}`
-    );
-  });
+  const server =
+    express();
+
+  /*
+   * API
+   */
+  server.use(app);
+
+  /*
+   * Vite
+   */
+  server.use(
+    vite.middlewares
+  );
+
+  server.listen(
+    PORT,
+    '0.0.0.0',
+    () => {
+      console.log(
+        `Server running at http://localhost:${PORT}`
+      );
+    }
+  );
 }
 
-startLocalServer().catch((error) => {
-  console.error('[Server] Failed to start:', error);
-  process.exit(1);
-});
+startServer().catch(
+  (error) => {
+    console.error(
+      'Failed to start server:',
+      error
+    );
+
+    process.exit(1);
+  }
+);
