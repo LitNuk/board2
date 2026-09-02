@@ -416,25 +416,56 @@ app.get('/api/reddit/user/:username/activity', requireAuth, async (req, res) => 
   }
 });
 
-// Setup Vite development middleware or production static serving
-async function startServer() {
+// // Setup Vite development middleware or production static serving
+// async function startServer() {
+//   if (process.env.NODE_ENV !== 'production') {
+//     const vite = await createViteServer({
+//       server: { middlewareMode: true },
+//       appType: 'spa',
+//     });
+//     app.use(vite.middlewares);
+//   } else {
+//     const distPath = path.join(process.cwd(), 'dist');
+//     app.use(express.static(distPath));
+//     app.get('*', (_req, res) => {
+//       res.sendFile(path.join(distPath, 'index.html'));
+//     });
+//   }
+//
+//   app.listen(PORT, '0.0.0.0', () => {
+//     console.log(`[LitNuke X ANUMA] Server running on http://0.0.0.0:${PORT}`);
+//   });
+// }
+//
+// startServer();
+//
+async function setupServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+
     app.use(express.static(distPath));
+
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[LitNuke X ANUMA] Server running on http://0.0.0.0:${PORT}`);
-  });
 }
 
-startServer();
+export { app, setupServer };
+
+if (process.env.VERCEL !== '1') {
+  setupServer().then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(
+        `[LitNuke X ANUMA] Server running on http://0.0.0.0:${PORT}`
+      );
+    });
+  });
+}
