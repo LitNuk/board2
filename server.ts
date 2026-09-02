@@ -1,51 +1,65 @@
 import express from 'express';
-import path from 'path';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
+import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
-// ---- Dashboard login (protects the whole app, not Reddit itself) ----
+// ============================================================
+// Environment / Authentication
+// ============================================================
+
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+
 let SESSION_SECRET = process.env.SESSION_SECRET || '';
 
 if (!SESSION_SECRET) {
   console.warn(
-    '[Auth] SESSION_SECRET is not set in .env — using a random secret generated at startup. ' +
-      'This means everyone will be logged out every time the server restarts. Set SESSION_SECRET in .env to fix this.'
+    '[Auth] SESSION_SECRET is not set. Using a random secret for this process.'
   );
+
   SESSION_SECRET = crypto.randomBytes(32).toString('hex');
 }
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
   console.warn(
-    '[Auth] ADMIN_USERNAME / ADMIN_PASSWORD are not set in .env — login is DISABLED and the dashboard ' +
-      'is open to anyone who can reach this server. Set both in .env to require a login.'
+    '[Auth] ADMIN_USERNAME / ADMIN_PASSWORD are not configured. Login is disabled.'
   );
 }
 
 const SESSION_COOKIE_NAME = 'ln_session';
-const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// ============================================================
+// Cookie / Session Helpers
+// ============================================================
 
 function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
-  if (!header) return out;
+
+  if (!header) {
+    return out;
+  }
 
   header.split(';').forEach((pair) => {
     const idx = pair.indexOf('=');
-    if (idx === -1) return;
+
+    if (idx === -1) {
+      return;
+    }
 
     const key = pair.slice(0, idx).trim();
     const val = decodeURIComponent(pair.slice(idx + 1).trim());
 
-    if (key) out[key] = val;
+    if (key) {
+      out[key] = val;
+    }
   });
 
   return out;
@@ -55,7 +69,9 @@ function timingSafeStringEqual(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
   const bBuf = Buffer.from(b);
 
-  if (aBuf.length !== bBuf.length) return false;
+  if (aBuf.length !== bBuf.length) {
+    return false;
+  }
 
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
@@ -71,7 +87,10 @@ function signValue(value: string): string {
 
 function unsignValue(signed: string): string | null {
   const idx = signed.lastIndexOf('.');
-  if (idx === -1) return null;
+
+  if (idx === -1) {
+    return null;
+  }
 
   const value = signed.slice(0, idx);
   const sig = signed.slice(idx + 1);
@@ -84,9 +103,13 @@ function unsignValue(signed: string): string | null {
   const sigBuf = Buffer.from(sig);
   const expBuf = Buffer.from(expected);
 
-  if (sigBuf.length !== expBuf.length) return null;
+  if (sigBuf.length !== expBuf.length) {
+    return null;
+  }
 
-  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return null;
+  }
 
   return value;
 }
@@ -102,9 +125,14 @@ function createSessionToken(username: string): string {
   return signValue(payload);
 }
 
-function verifySessionToken(token: string): { username: string } | null {
+function verifySessionToken(
+  token: string
+): { username: string } | null {
   const payload = unsignValue(token);
-  if (!payload) return null;
+
+  if (!payload) {
+    return null;
+  }
 
   try {
     const data = JSON.parse(
@@ -115,7 +143,9 @@ function verifySessionToken(token: string): { username: string } | null {
       return null;
     }
 
-    return { username: data.u };
+    return {
+      username: data.u,
+    };
   } catch {
     return null;
   }
@@ -127,15 +157,23 @@ function getSessionFromRequest(
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies[SESSION_COOKIE_NAME];
 
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
 
   return verifySessionToken(token);
 }
 
-// Basic brute-force protection: lock an IP out after 5 bad attempts within 15 min
+// ============================================================
+// Login Rate Limiting
+// ============================================================
+
 const loginAttempts = new Map<
   string,
-  { count: number; firstAttempt: number }
+  {
+    count: number;
+    firstAttempt: number;
+  }
 >();
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -144,7 +182,9 @@ const LOGIN_MAX_ATTEMPTS = 5;
 function isLockedOut(ip: string): boolean {
   const entry = loginAttempts.get(ip);
 
-  if (!entry) return false;
+  if (!entry) {
+    return false;
+  }
 
   if (Date.now() - entry.firstAttempt > LOGIN_WINDOW_MS) {
     loginAttempts.delete(ip);
@@ -157,7 +197,10 @@ function isLockedOut(ip: string): boolean {
 function recordFailedAttempt(ip: string) {
   const entry = loginAttempts.get(ip);
 
-  if (!entry || Date.now() - entry.firstAttempt > LOGIN_WINDOW_MS) {
+  if (
+    !entry ||
+    Date.now() - entry.firstAttempt > LOGIN_WINDOW_MS
+  ) {
     loginAttempts.set(ip, {
       count: 1,
       firstAttempt: Date.now(),
@@ -171,8 +214,10 @@ function clearFailedAttempts(ip: string) {
   loginAttempts.delete(ip);
 }
 
-// Protects any route it's applied to — returns 401 if there's no valid session.
-// If ADMIN_USERNAME/ADMIN_PASSWORD aren't configured, auth is treated as disabled.
+// ============================================================
+// Authentication Middleware
+// ============================================================
+
 function requireAuth(
   req: express.Request,
   res: express.Response,
@@ -194,8 +239,15 @@ function requireAuth(
   next();
 }
 
+// ============================================================
+// Authentication Routes
+// ============================================================
+
 app.post('/api/auth/login', (req, res) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip =
+    req.ip ||
+    req.socket.remoteAddress ||
+    'unknown';
 
   if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
     return res.status(400).json({
@@ -208,7 +260,8 @@ app.post('/api/auth/login', (req, res) => {
   if (isLockedOut(ip)) {
     return res.status(429).json({
       success: false,
-      message: 'Too many failed attempts. Try again in 15 minutes.',
+      message:
+        'Too many failed attempts. Try again in 15 minutes.',
     });
   }
 
@@ -226,8 +279,15 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
 
-  const validUsername = timingSafeStringEqual(username, ADMIN_USERNAME);
-  const validPassword = timingSafeStringEqual(password, ADMIN_PASSWORD);
+  const validUsername = timingSafeStringEqual(
+    username,
+    ADMIN_USERNAME
+  );
+
+  const validPassword = timingSafeStringEqual(
+    password,
+    ADMIN_PASSWORD
+  );
 
   if (!validUsername || !validPassword) {
     recordFailedAttempt(ip);
@@ -243,7 +303,9 @@ app.post('/api/auth/login', (req, res) => {
   const token = createSessionToken(username);
 
   const secureFlag =
-    process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    process.env.NODE_ENV === 'production'
+      ? '; Secure'
+      : '';
 
   res.setHeader(
     'Set-Cookie',
@@ -264,7 +326,9 @@ app.post('/api/auth/logout', (_req, res) => {
     `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`
   );
 
-  res.json({ success: true });
+  res.json({
+    success: true,
+  });
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -279,7 +343,9 @@ app.get('/api/auth/me', (req, res) => {
   const session = getSessionFromRequest(req);
 
   if (!session) {
-    return res.json({ authenticated: false });
+    return res.json({
+      authenticated: false,
+    });
   }
 
   res.json({
@@ -288,34 +354,47 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
-// In-memory cache for Reddit user data to stay within rate limits
+// ============================================================
+// Reddit Configuration
+// ============================================================
+
 interface CacheEntry {
   timestamp: number;
   data: any;
 }
 
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 45 * 1000; // 45 seconds cache
 
-const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID || '';
-const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET || '';
+const CACHE_TTL_MS = 45 * 1000;
+
+const REDDIT_CLIENT_ID =
+  process.env.REDDIT_CLIENT_ID || '';
+
+const REDDIT_CLIENT_SECRET =
+  process.env.REDDIT_CLIENT_SECRET || '';
 
 const REDDIT_USER_AGENT =
   process.env.REDDIT_USER_AGENT ||
-  'web:litnuke-x-anuma-tracker:1.0.0 (by /u/your_reddit_username)';
+  'web:litnuke-x-anuma-tracker:1.0.0';
 
 const HAS_OAUTH_CREDENTIALS = Boolean(
-  REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET
+  REDDIT_CLIENT_ID &&
+  REDDIT_CLIENT_SECRET
 );
 
-// ---- OAuth (application-only / client_credentials) token handling ----
+// ============================================================
+// Reddit OAuth
+// ============================================================
+
 let cachedToken: {
   accessToken: string;
   expiresAt: number;
 } | null = null;
 
 async function getAppOnlyAccessToken(): Promise<string | null> {
-  if (!HAS_OAUTH_CREDENTIALS) return null;
+  if (!HAS_OAUTH_CREDENTIALS) {
+    return null;
+  }
 
   if (
     cachedToken &&
@@ -334,7 +413,8 @@ async function getAppOnlyAccessToken(): Promise<string | null> {
       method: 'POST',
       headers: {
         Authorization: `Basic ${basicAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type':
+          'application/x-www-form-urlencoded',
         'User-Agent': REDDIT_USER_AGENT,
       },
       body: 'grant_type=client_credentials',
@@ -357,26 +437,33 @@ async function getAppOnlyAccessToken(): Promise<string | null> {
 
   cachedToken = {
     accessToken: json.access_token,
-    expiresAt: Date.now() + (json.expires_in || 3600) * 1000,
+    expiresAt:
+      Date.now() +
+      (json.expires_in || 3600) * 1000,
   };
 
   return cachedToken.accessToken;
 }
 
-// Helper to fetch from Reddit.
-// Tries OAuth first when credentials are configured,
-// then falls back to the public JSON endpoint.
-async function fetchRedditEndpoint(endpoint: string) {
-  // Path 1: authenticated OAuth API
+// ============================================================
+// Reddit API Helper
+// ============================================================
+
+async function fetchRedditEndpoint(
+  endpoint: string
+) {
+  // OAuth API
   if (HAS_OAUTH_CREDENTIALS) {
     try {
-      const token = await getAppOnlyAccessToken();
+      const token =
+        await getAppOnlyAccessToken();
 
       if (token) {
-        const oauthUrl = `https://oauth.reddit.com${endpoint.replace(
-          /\.json(\?|$)/,
-          '$1'
-        )}`;
+        const oauthUrl =
+          `https://oauth.reddit.com${endpoint.replace(
+            /\.json(\?|$)/,
+            '$1'
+          )}`;
 
         const response = await fetch(oauthUrl, {
           headers: {
@@ -395,23 +482,24 @@ async function fetchRedditEndpoint(endpoint: string) {
         }
 
         console.warn(
-          `[Reddit OAuth] ${oauthUrl} responded ${response.status}, falling back to public endpoint.`
+          `[Reddit OAuth] Request returned ${response.status}. Falling back to public endpoint.`
         );
       }
     } catch (err: any) {
-      if (err.message === 'NOT_FOUND') {
+      if (err?.message === 'NOT_FOUND') {
         throw err;
       }
 
       console.warn(
-        '[Reddit OAuth] Request failed, falling back to public endpoint:',
-        err.message
+        '[Reddit OAuth] Request failed:',
+        err?.message
       );
     }
   }
 
-  // Path 2: public JSON endpoint
-  const url = `https://www.reddit.com${endpoint}`;
+  // Public API fallback
+  const url =
+    `https://www.reddit.com${endpoint}`;
 
   const response = await fetch(url, {
     headers: {
@@ -424,11 +512,14 @@ async function fetchRedditEndpoint(endpoint: string) {
     throw new Error('NOT_FOUND');
   }
 
-  if (response.status === 403 || response.status === 429) {
+  if (
+    response.status === 403 ||
+    response.status === 429
+  ) {
     throw new Error(
       HAS_OAUTH_CREDENTIALS
         ? `Reddit rejected the request (${response.status}). Try again in a moment.`
-        : `Reddit blocked the unauthenticated request (${response.status}). Register a Reddit App and set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in the server environment variables for a much more stable connection.`
+        : `Reddit blocked the unauthenticated request (${response.status}). Register a Reddit App and configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET.`
     );
   }
 
@@ -441,7 +532,10 @@ async function fetchRedditEndpoint(endpoint: string) {
   return await response.json();
 }
 
-// Health check endpoint
+// ============================================================
+// Health Check
+// ============================================================
+
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -450,7 +544,10 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Fetch Reddit user profile info
+// ============================================================
+// Reddit User Profile
+// ============================================================
+
 app.get(
   '/api/reddit/user/:username/about',
   requireAuth,
@@ -459,12 +556,15 @@ app.get(
       .replace(/^(u\/|r\/|@)/, '')
       .trim();
 
-    const cacheKey = `about:${cleanUsername.toLowerCase()}`;
+    const cacheKey =
+      `about:${cleanUsername.toLowerCase()}`;
+
     const cached = cache.get(cacheKey);
 
     if (
       cached &&
-      Date.now() - cached.timestamp < CACHE_TTL_MS
+      Date.now() - cached.timestamp <
+        CACHE_TTL_MS
     ) {
       return res.json({
         success: true,
@@ -474,9 +574,10 @@ app.get(
     }
 
     try {
-      const json = await fetchRedditEndpoint(
-        `/user/${cleanUsername}/about.json`
-      );
+      const json =
+        await fetchRedditEndpoint(
+          `/user/${cleanUsername}/about.json`
+        );
 
       const userData = json?.data;
 
@@ -491,16 +592,22 @@ app.get(
         username: userData.name,
         totalKarma:
           userData.total_karma ||
-          userData.link_karma + userData.comment_karma ||
+          userData.link_karma +
+            userData.comment_karma ||
           0,
-        postKarma: userData.link_karma || 0,
-        commentKarma: userData.comment_karma || 0,
-        createdUtc: userData.created_utc || 0,
+        postKarma:
+          userData.link_karma || 0,
+        commentKarma:
+          userData.comment_karma || 0,
+        createdUtc:
+          userData.created_utc || 0,
         avatarUrl: userData.icon_img
           ? userData.icon_img.split('?')[0]
           : null,
-        isVerified: userData.verified || false,
-        isSuspended: userData.is_suspended || false,
+        isVerified:
+          userData.verified || false,
+        isSuspended:
+          userData.is_suspended || false,
       };
 
       cache.set(cacheKey, {
@@ -508,7 +615,7 @@ app.get(
         data: cleanData,
       });
 
-      res.json({
+      return res.json({
         success: true,
         source: 'live',
         data: cleanData,
@@ -516,16 +623,16 @@ app.get(
     } catch (error: any) {
       console.warn(
         `[Reddit Proxy] Could not fetch user about for ${cleanUsername}:`,
-        error.message
+        error?.message
       );
 
       const message =
-        error.message === 'NOT_FOUND'
+        error?.message === 'NOT_FOUND'
           ? `u/${cleanUsername} not found on Reddit.`
-          : error.message ||
+          : error?.message ||
             'Failed to fetch the live Reddit profile.';
 
-      res.status(200).json({
+      return res.status(200).json({
         success: false,
         message,
         fallback: true,
@@ -534,7 +641,10 @@ app.get(
   }
 );
 
-// Fetch Reddit user activities (submissions & comments)
+// ============================================================
+// Reddit User Activity
+// ============================================================
+
 app.get(
   '/api/reddit/user/:username/activity',
   requireAuth,
@@ -543,12 +653,15 @@ app.get(
       .replace(/^(u\/|r\/|@)/, '')
       .trim();
 
-    const cacheKey = `activity:${cleanUsername.toLowerCase()}`;
+    const cacheKey =
+      `activity:${cleanUsername.toLowerCase()}`;
+
     const cached = cache.get(cacheKey);
 
     if (
       cached &&
-      Date.now() - cached.timestamp < CACHE_TTL_MS
+      Date.now() - cached.timestamp <
+        CACHE_TTL_MS
     ) {
       return res.json({
         success: true,
@@ -558,7 +671,10 @@ app.get(
     }
 
     try {
-      const [overviewData, aboutData] = await Promise.allSettled([
+      const [
+        overviewData,
+        aboutData,
+      ] = await Promise.allSettled([
         fetchRedditEndpoint(
           `/user/${cleanUsername}/overview.json?limit=25&sort=new`
         ),
@@ -573,40 +689,59 @@ app.get(
         overviewData.status === 'fulfilled' &&
         overviewData.value?.data?.children
       ) {
-        rawChildren = overviewData.value.data.children;
+        rawChildren =
+          overviewData.value.data.children;
       }
 
-      const items = rawChildren.map((item: any) => {
-        const kind = item.kind;
-        const d = item.data;
-        const isPost = kind === 't3';
+      const items = rawChildren.map(
+        (item: any) => {
+          const kind = item.kind;
+          const d = item.data;
+          const isPost = kind === 't3';
 
-        return {
-          id: d.name || `reddit-${d.id}`,
-          username: d.author || cleanUsername,
-          type: isPost ? 'post' : 'comment',
-          title: isPost ? d.title : undefined,
-          parentTitle: !isPost ? d.link_title : undefined,
-          body: isPost ? d.selftext || d.title : d.body,
-          subreddit:
-            d.subreddit_name_prefixed ||
-            `r/${d.subreddit}`,
-          score: d.score ?? 1,
-          upvoteRatio: d.upvote_ratio ?? 1,
-          numComments: d.num_comments ?? 0,
-          createdUtc:
-            d.created_utc ||
-            Math.floor(Date.now() / 1000),
-          permalink: d.permalink
-            ? `https://reddit.com${d.permalink}`
-            : `https://reddit.com/user/${cleanUsername}`,
-          url:
-            d.url ||
-            (d.permalink
+          return {
+            id:
+              d.name ||
+              `reddit-${d.id}`,
+            username:
+              d.author ||
+              cleanUsername,
+            type: isPost
+              ? 'post'
+              : 'comment',
+            title: isPost
+              ? d.title
+              : undefined,
+            parentTitle: !isPost
+              ? d.link_title
+              : undefined,
+            body: isPost
+              ? d.selftext || d.title
+              : d.body,
+            subreddit:
+              d.subreddit_name_prefixed ||
+              `r/${d.subreddit}`,
+            score: d.score ?? 1,
+            upvoteRatio:
+              d.upvote_ratio ?? 1,
+            numComments:
+              d.num_comments ?? 0,
+            createdUtc:
+              d.created_utc ||
+              Math.floor(
+                Date.now() / 1000
+              ),
+            permalink: d.permalink
               ? `https://reddit.com${d.permalink}`
-              : undefined),
-        };
-      });
+              : `https://reddit.com/user/${cleanUsername}`,
+            url:
+              d.url ||
+              (d.permalink
+                ? `https://reddit.com${d.permalink}`
+                : undefined),
+          };
+        }
+      );
 
       let userInfo = null;
 
@@ -620,11 +755,15 @@ app.get(
           username: u.name,
           totalKarma:
             u.total_karma ||
-            u.link_karma + u.comment_karma ||
+            u.link_karma +
+              u.comment_karma ||
             0,
-          postKarma: u.link_karma || 0,
-          commentKarma: u.comment_karma || 0,
-          createdUtc: u.created_utc || 0,
+          postKarma:
+            u.link_karma || 0,
+          commentKarma:
+            u.comment_karma || 0,
+          createdUtc:
+            u.created_utc || 0,
           avatarUrl: u.icon_img
             ? u.icon_img.split('?')[0]
             : null,
@@ -641,7 +780,7 @@ app.get(
         data: responsePayload,
       });
 
-      res.json({
+      return res.json({
         success: true,
         source: 'live',
         ...responsePayload,
@@ -649,13 +788,14 @@ app.get(
     } catch (error: any) {
       console.warn(
         `[Reddit Proxy] Error fetching activity for ${cleanUsername}:`,
-        error.message
+        error?.message
       );
 
-      res.status(200).json({
+      return res.status(200).json({
         success: false,
         message:
-          error.message || 'Failed to load the Reddit feed.',
+          error?.message ||
+          'Failed to load the Reddit feed.',
         items: [],
         fallback: true,
       });
@@ -663,12 +803,9 @@ app.get(
   }
 );
 
-// ------------------------------------------------------------
-// Local development server
-//
-// Vercel does NOT execute this section. Instead, api/index.ts
-// exposes the Express app as a Vercel Function.
-// ------------------------------------------------------------
+// ============================================================
+// Local Development Only
+// ============================================================
 
 async function startLocalServer() {
   const vite = await createViteServer({
@@ -682,16 +819,18 @@ async function startLocalServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `[LitNuke X ANUMA] Server running on http://0.0.0.0:${PORT}`
+      `[LitNuke X ANUMA] Server running on http://localhost:${PORT}`
     );
   });
 }
 
-// Keep `npm run dev` working locally.
-// Vercel sets VERCEL=1, so this will not start a second server there.
 if (process.env.VERCEL !== '1') {
   startLocalServer().catch((error) => {
-    console.error('[Server] Failed to start:', error);
+    console.error(
+      '[Server] Failed to start:',
+      error
+    );
+
     process.exit(1);
   });
 }
