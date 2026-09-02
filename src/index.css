@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+@media screen {
+  .print-report {
+    display: none;
+  }
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 14mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .print-report,
+  .print-report * {
+    visibility: visible;
+  }
+
+  .print-report {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .print-report .pr-avoid-break {
+    break-inside: avoid;
+  }
+
+  .print-report .pr-page-break {
+    break-before: page;
+  }
+
+  .print-report a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+/*
+  Premium palette — antique brass on warm graphite, with muted jade / wine /
+  sapphire / plum for status accents. Remapping Tailwind's own scales (rather
+  than adding new color names) means every existing bg-orange-600,
+  bg-slate-900, etc. class across the app picks this up automatically.
+*/
+@theme {
+  /* Neutral base — warm graphite instead of default cool blue-grey slate */
+  --color-slate-50: #F7F5F1;
+  --color-slate-100: #EDE8E0;
+  --color-slate-200: #D9D0C2;
+  --color-slate-300: #BDB09B;
+  --color-slate-400: #968971;
+  --color-slate-500: #756A57;
+  --color-slate-600: #5A5142;
+  --color-slate-700: #423B30;
+  --color-slate-800: #2B2620;
+  --color-slate-900: #1B1815;
+  --color-slate-950: #100E0C;
+
+  /* Primary accent — antique brass/gold, replaces Reddit orange */
+  --color-orange-50: #FBF3E1;
+  --color-orange-100: #F5E4BE;
+  --color-orange-200: #EACB86;
+  --color-orange-300: #DDAE58;
+  --color-orange-400: #C99530;
+  --color-orange-500: #B07F1E;
+  --color-orange-600: #9C6B14;
+  --color-orange-700: #7C5510;
+  --color-orange-800: #5E400D;
+  --color-orange-900: #3F2B09;
+  --color-orange-950: #241804;
+
+  /* Positive / success — muted deep jade instead of bright emerald */
+  --color-emerald-50: #EAF3EE;
+  --color-emerald-100: #D2E6DC;
+  --color-emerald-200: #A6CDB9;
+  --color-emerald-300: #7AB496;
+  --color-emerald-400: #549A78;
+  --color-emerald-500: #3D7F61;
+  --color-emerald-600: #2F6B4F;
+  --color-emerald-700: #275842;
+  --color-emerald-800: #204636;
+  --color-emerald-900: #17342A;
+  --color-emerald-950: #0C1E18;
+
+  /* Negative / danger — muted wine instead of bright red */
+  --color-red-50: #F5E9E7;
+  --color-red-100: #EAD1CC;
+  --color-red-200: #D3A29A;
+  --color-red-300: #BC7468;
+  --color-red-400: #A34E42;
+  --color-red-500: #8A392F;
+  --color-red-600: #722C24;
+  --color-red-700: #5A211B;
+  --color-red-800: #431814;
+  --color-red-900: #2C0F0C;
+  --color-red-950: #180706;
+
+  /* Secondary accent — deep sapphire ink instead of bright blue */
+  --color-blue-50: #E8EDF5;
+  --color-blue-100: #D1DCEB;
+  --color-blue-200: #A3B9D6;
+  --color-blue-300: #7596C2;
+  --color-blue-400: #4C74A8;
+  --color-blue-500: #385C8A;
+  --color-blue-600: #2C4A6F;
+  --color-blue-700: #223A57;
+  --color-blue-800: #182940;
+  --color-blue-900: #101C2C;
+  --color-blue-950: #080E17;
+
+  /* Tertiary accent — deep plum instead of bright purple */
+  --color-purple-50: #F1E9F2;
+  --color-purple-100: #E1D0E4;
+  --color-purple-200: #C4A3CB;
+  --color-purple-300: #A876B2;
+  --color-purple-400: #8B5498;
+  --color-purple-500: #713E7D;
+  --color-purple-600: #5A3164;
+  --color-purple-700: #45264D;
+  --color-purple-800: #301B37;
+  --color-purple-900: #1F1224;
+  --color-purple-950: #120B15;
+}

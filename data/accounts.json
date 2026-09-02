@@ -1,0 +1,46 @@
+[
+  {
+    "username": "Tata_Colores",
+    "persona": "AI Systems Architect & Tech Evangelist",
+    "targetSubreddits": [
+      "r/ArtificialInteligence",
+      "r/technology",
+      "r/programming",
+      "r/indonesia"
+    ],
+    "accountHolder": "LitNuke",
+    "notes": "",
+    "isActive": true,
+    "karma": {
+      "total": 80537,
+      "post": 78197,
+      "comment": 2340
+    },
+    "avatarUrl": "https://styles.redditmedia.com/t5_g4u9d0/styles/profileIcon_9q4mitur8ulg1.jpg",
+    "redditCreatedUtc": 1765804265,
+    "id": "acc-1788345178764-eu834",
+    "createdAt": "2026-09-02T10:32:58.764Z"
+  },
+  {
+    "username": "Maximum_Intern_2736",
+    "persona": "AI Systems Architect & Tech Evangelist",
+    "targetSubreddits": [
+      "r/ArtificialInteligence",
+      "r/technology",
+      "r/programming",
+      "r/indonesia"
+    ],
+    "accountHolder": "LitNuke",
+    "notes": "",
+    "isActive": true,
+    "karma": {
+      "total": 162,
+      "post": 157,
+      "comment": 5
+    },
+    "avatarUrl": "https://www.redditstatic.com/avatars/defaults/v2/avatar_default_4.png",
+    "redditCreatedUtc": 1715422338,
+    "id": "acc-1788345254756-zllvb",
+    "createdAt": "2026-09-02T10:34:14.756Z"
+  }
+]
