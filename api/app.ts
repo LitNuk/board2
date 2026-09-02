@@ -8,9 +8,9 @@ const app = express();
 
 app.use(express.json());
 
-// ============================================================
-// Dashboard Authentication
-// ============================================================
+/* ============================================================
+   CONFIG
+   ============================================================ */
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -19,9 +19,7 @@ let SESSION_SECRET = process.env.SESSION_SECRET || '';
 
 if (!SESSION_SECRET) {
   console.warn(
-    '[Auth] SESSION_SECRET is not set in the environment. ' +
-      'Using a random secret generated at startup. ' +
-      'Users will be logged out when the function instance restarts.'
+    '[Auth] SESSION_SECRET is not set. A random secret will be generated for this instance.'
   );
 
   SESSION_SECRET = crypto.randomBytes(32).toString('hex');
@@ -29,17 +27,28 @@ if (!SESSION_SECRET) {
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
   console.warn(
-    '[Auth] ADMIN_USERNAME / ADMIN_PASSWORD are not configured. ' +
-      'Login is disabled.'
+    '[Auth] ADMIN_USERNAME / ADMIN_PASSWORD are not configured. Login is disabled.'
   );
 }
 
 const SESSION_COOKIE_NAME = 'ln_session';
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// ============================================================
-// Cookie Helpers
-// ============================================================
+const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID || '';
+const REDDIT_CLIENT_SECRET =
+  process.env.REDDIT_CLIENT_SECRET || '';
+
+const REDDIT_USER_AGENT =
+  process.env.REDDIT_USER_AGENT ||
+  'web:litnuke-x-anuma-tracker:1.0.0';
+
+const HAS_OAUTH_CREDENTIALS = Boolean(
+  REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET
+);
+
+/* ============================================================
+   COOKIE / SESSION HELPERS
+   ============================================================ */
 
 function parseCookies(
   header?: string
@@ -58,21 +67,23 @@ function parseCookies(
     }
 
     const key = pair.slice(0, idx).trim();
-    const val = decodeURIComponent(
-      pair.slice(idx + 1).trim()
-    );
+    const rawValue = pair
+      .slice(idx + 1)
+      .trim();
 
-    if (key) {
-      out[key] = val;
+    try {
+      const value = decodeURIComponent(rawValue);
+
+      if (key) {
+        out[key] = value;
+      }
+    } catch {
+      // Ignore malformed cookie values.
     }
   });
 
   return out;
 }
-
-// ============================================================
-// Cryptographic Helpers
-// ============================================================
 
 function timingSafeStringEqual(
   a: string,
@@ -121,19 +132,12 @@ function unsignValue(
     return null;
   }
 
-  if (!crypto.timingSafeEqual(
-    sigBuf,
-    expectedBuf
-  )) {
+  if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) {
     return null;
   }
 
   return value;
 }
-
-// ============================================================
-// Session Helpers
-// ============================================================
 
 function createSessionToken(
   username: string
@@ -198,9 +202,9 @@ function getSessionFromRequest(
   return verifySessionToken(token);
 }
 
-// ============================================================
-// Login Rate Limiting
-// ============================================================
+/* ============================================================
+   AUTH
+   ============================================================ */
 
 const loginAttempts = new Map<
   string,
@@ -230,15 +234,12 @@ function isLockedOut(ip: string): boolean {
     return false;
   }
 
-  return (
-    entry.count >=
-    LOGIN_MAX_ATTEMPTS
-  );
+  return entry.count >= LOGIN_MAX_ATTEMPTS;
 }
 
 function recordFailedAttempt(
   ip: string
-) {
+): void {
   const entry = loginAttempts.get(ip);
 
   if (
@@ -259,21 +260,15 @@ function recordFailedAttempt(
 
 function clearFailedAttempts(
   ip: string
-) {
+): void {
   loginAttempts.delete(ip);
 }
-
-// ============================================================
-// Authentication Middleware
-// ============================================================
 
 function requireAuth(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) {
-  // If credentials aren't configured,
-  // authentication is disabled.
   if (
     !ADMIN_USERNAME ||
     !ADMIN_PASSWORD
@@ -295,9 +290,9 @@ function requireAuth(
   next();
 }
 
-// ============================================================
-// Authentication Routes
-// ============================================================
+/* ============================================================
+   AUTH ROUTES
+   ============================================================ */
 
 app.post(
   '/api/auth/login',
@@ -314,7 +309,7 @@ app.post(
       return res.status(400).json({
         success: false,
         message:
-          'Login is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD in the server environment variables.',
+          'Login is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD in the Vercel environment variables.',
       });
     }
 
@@ -382,7 +377,9 @@ app.post(
 
     res.setHeader(
       'Set-Cookie',
-      `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Path=/; Max-Age=${Math.floor(
+      `${SESSION_COOKIE_NAME}=${encodeURIComponent(
+        token
+      )}; HttpOnly; Path=/; Max-Age=${Math.floor(
         SESSION_MAX_AGE_MS / 1000
       )}; SameSite=Lax${secureFlag}`
     );
@@ -438,9 +435,9 @@ app.get(
   }
 );
 
-// ============================================================
-// Reddit Configuration
-// ============================================================
+/* ============================================================
+   CACHE
+   ============================================================ */
 
 interface CacheEntry {
   timestamp: number;
@@ -450,28 +447,11 @@ interface CacheEntry {
 const cache =
   new Map<string, CacheEntry>();
 
-const CACHE_TTL_MS =
-  45 * 1000;
+const CACHE_TTL_MS = 45 * 1000;
 
-const REDDIT_CLIENT_ID =
-  process.env.REDDIT_CLIENT_ID || '';
-
-const REDDIT_CLIENT_SECRET =
-  process.env.REDDIT_CLIENT_SECRET || '';
-
-const REDDIT_USER_AGENT =
-  process.env.REDDIT_USER_AGENT ||
-  'web:litnuke-x-anuma-tracker:1.0.0';
-
-const HAS_OAUTH_CREDENTIALS =
-  Boolean(
-    REDDIT_CLIENT_ID &&
-      REDDIT_CLIENT_SECRET
-  );
-
-// ============================================================
-// Reddit OAuth Token
-// ============================================================
+/* ============================================================
+   REDDIT OAUTH
+   ============================================================ */
 
 let cachedToken: {
   accessToken: string;
@@ -498,23 +478,21 @@ async function getAppOnlyAccessToken(): Promise<
       `${REDDIT_CLIENT_ID}:${REDDIT_CLIENT_SECRET}`
     ).toString('base64');
 
-  const response =
-    await fetch(
-      'https://www.reddit.com/api/v1/access_token',
-      {
-        method: 'POST',
-        headers: {
-          Authorization:
-            `Basic ${basicAuth}`,
-          'Content-Type':
-            'application/x-www-form-urlencoded',
-          'User-Agent':
-            REDDIT_USER_AGENT,
-        },
-        body:
-          'grant_type=client_credentials',
-      }
-    );
+  const response = await fetch(
+    'https://www.reddit.com/api/v1/access_token',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type':
+          'application/x-www-form-urlencoded',
+        'User-Agent':
+          REDDIT_USER_AGENT,
+      },
+      body:
+        'grant_type=client_credentials',
+    }
+  );
 
   if (!response.ok) {
     console.warn(
@@ -543,17 +521,13 @@ async function getAppOnlyAccessToken(): Promise<
   return cachedToken.accessToken;
 }
 
-// ============================================================
-// Reddit API Helper
-// ============================================================
+/* ============================================================
+   REDDIT FETCH
+   ============================================================ */
 
 async function fetchRedditEndpoint(
   endpoint: string
 ) {
-  // ----------------------------------------------------------
-  // OAuth API
-  // ----------------------------------------------------------
-
   if (HAS_OAUTH_CREDENTIALS) {
     try {
       const token =
@@ -591,27 +565,23 @@ async function fetchRedditEndpoint(
         }
 
         console.warn(
-          `[Reddit OAuth] ${oauthUrl} responded ${response.status}, falling back to public endpoint.`
+          `[Reddit OAuth] Request returned ${response.status}; falling back to public endpoint.`
         );
       }
-    } catch (error: any) {
+    } catch (err: any) {
       if (
-        error?.message ===
+        err?.message ===
         'NOT_FOUND'
       ) {
-        throw error;
+        throw err;
       }
 
       console.warn(
-        '[Reddit OAuth] Request failed, falling back to public endpoint:',
-        error?.message
+        '[Reddit OAuth] Request failed:',
+        err?.message
       );
     }
   }
-
-  // ----------------------------------------------------------
-  // Public Reddit API
-  // ----------------------------------------------------------
 
   const url =
     `https://www.reddit.com${endpoint}`;
@@ -626,7 +596,9 @@ async function fetchRedditEndpoint(
       },
     });
 
-  if (response.status === 404) {
+  if (
+    response.status === 404
+  ) {
     throw new Error(
       'NOT_FOUND'
     );
@@ -639,7 +611,7 @@ async function fetchRedditEndpoint(
     throw new Error(
       HAS_OAUTH_CREDENTIALS
         ? `Reddit rejected the request (${response.status}). Try again in a moment.`
-        : `Reddit blocked the unauthenticated request (${response.status}). Register a Reddit App and set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in the server environment variables for a more stable connection.`
+        : `Reddit blocked the unauthenticated request (${response.status}). Configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in Vercel.`
     );
   }
 
@@ -652,9 +624,9 @@ async function fetchRedditEndpoint(
   return await response.json();
 }
 
-// ============================================================
-// Health Check
-// ============================================================
+/* ============================================================
+   HEALTH CHECK
+   ============================================================ */
 
 app.get(
   '/api/health',
@@ -669,9 +641,9 @@ app.get(
   }
 );
 
-// ============================================================
-// Reddit User Profile
-// ============================================================
+/* ============================================================
+   REDDIT USER ABOUT
+   ============================================================ */
 
 app.get(
   '/api/reddit/user/:username/about',
@@ -707,7 +679,9 @@ app.get(
     try {
       const json =
         await fetchRedditEndpoint(
-          `/user/${cleanUsername}/about.json`
+          `/user/${encodeURIComponent(
+            cleanUsername
+          )}/about.json`
         );
 
       const userData =
@@ -722,33 +696,26 @@ app.get(
       }
 
       const cleanData = {
-        username:
-          userData.name,
-
+        username: userData.name,
         totalKarma:
           userData.total_karma ||
-          userData.link_karma +
-            userData.comment_karma ||
-          0,
-
+          (userData.link_karma || 0) +
+            (userData.comment_karma || 0),
         postKarma:
           userData.link_karma || 0,
-
         commentKarma:
           userData.comment_karma || 0,
-
         createdUtc:
           userData.created_utc || 0,
-
         avatarUrl:
           userData.icon_img
-            ? userData.icon_img.split('?')[0]
+            ? userData.icon_img.split(
+                '?'
+              )[0]
             : null,
-
         isVerified:
           userData.verified ||
           false,
-
         isSuspended:
           userData.is_suspended ||
           false,
@@ -786,9 +753,9 @@ app.get(
   }
 );
 
-// ============================================================
-// Reddit User Activity
-// ============================================================
+/* ============================================================
+   REDDIT USER ACTIVITY
+   ============================================================ */
 
 app.get(
   '/api/reddit/user/:username/activity',
@@ -817,7 +784,9 @@ app.get(
       return res.json({
         success: true,
         source: 'cache',
-        items: cached.data,
+        items: cached.data.items,
+        userInfo:
+          cached.data.userInfo,
       });
     }
 
@@ -825,17 +794,22 @@ app.get(
       const [
         overviewData,
         aboutData,
-      ] = await Promise.allSettled([
-        fetchRedditEndpoint(
-          `/user/${cleanUsername}/overview.json?limit=25&sort=new`
-        ),
+      ] =
+        await Promise.allSettled([
+          fetchRedditEndpoint(
+            `/user/${encodeURIComponent(
+              cleanUsername
+            )}/overview.json?limit=25&sort=new`
+          ),
+          fetchRedditEndpoint(
+            `/user/${encodeURIComponent(
+              cleanUsername
+            )}/about.json`
+          ),
+        ]);
 
-        fetchRedditEndpoint(
-          `/user/${cleanUsername}/about.json`
-        ),
-      ]);
-
-      let rawChildren: any[] = [];
+      let rawChildren: any[] =
+        [];
 
       if (
         overviewData.status ===
@@ -892,7 +866,7 @@ app.get(
                 `r/${d.subreddit}`,
 
               score:
-                d.score ?? 1,
+                d.score ?? 0,
 
               upvoteRatio:
                 d.upvote_ratio ?? 1,
@@ -913,16 +887,15 @@ app.get(
 
               url:
                 d.url ||
-                (
-                  d.permalink
-                    ? `https://reddit.com${d.permalink}`
-                    : undefined
-                ),
+                (d.permalink
+                  ? `https://reddit.com${d.permalink}`
+                  : undefined),
             };
           }
         );
 
-      let userInfo = null;
+      let userInfo: any =
+        null;
 
       if (
         aboutData.status ===
@@ -933,27 +906,29 @@ app.get(
           aboutData.value.data;
 
         userInfo = {
-          username:
-            u.name,
+          username: u.name,
 
           totalKarma:
             u.total_karma ||
-            u.link_karma +
-              u.comment_karma ||
-            0,
+            (u.link_karma || 0) +
+              (u.comment_karma ||
+                0),
 
           postKarma:
             u.link_karma || 0,
 
           commentKarma:
-            u.comment_karma || 0,
+            u.comment_karma ||
+            0,
 
           createdUtc:
             u.created_utc || 0,
 
           avatarUrl:
             u.icon_img
-              ? u.icon_img.split('?')[0]
+              ? u.icon_img.split(
+                  '?'
+                )[0]
               : null,
         };
       }
@@ -991,9 +966,9 @@ app.get(
   }
 );
 
-// ============================================================
-// Export Express App
-// ============================================================
+/* ============================================================
+   EXPORT
+   ============================================================ */
 
 export default app;
 export { app };
